@@ -32,7 +32,7 @@ eq2$group <- "eQTL"
 tt <- rbind(ppi2,ft,eq2)
 head(tt)
 write.csv(tt,"total_network.csv",row.names=F,quote=F)
-#分别导出网络
+#exstract network
 write.csv(unique(tt[which(tt$type == "S1" | tt$type == "same"),]),"SM_total_network.csv",row.names=F,quote=F)
 write.csv(unique(tt[which(tt$type == "S2" | tt$type == "same"),]),"FM_total_network.csv",row.names=F,quote=F)
 dim(unique(tt[which(tt$type == "S1" | tt$type == "same"),]))
@@ -438,7 +438,7 @@ write.table(aa,"TableS31.txt",row.names = F, quote = F,sep="\t")
 node <- read.csv("node_total_networkR1.csv")
 hub_node <- node[which(node$hub == "yes" & node$putative == "yes" & node$Gene_name != "no"),]
 hub_node <- as.data.frame(hub_node$source)
-###提取hub基因关联的网络
+###isloate network related to hub genes
 ##SM
 net <- read.csv("putative_related_network.csv")
 colnames(hub_node) <- "source"
@@ -459,18 +459,14 @@ net2 <- rbind(net2_a,net2_b)
 dim(net2)
 write.csv(net2,"s2_new_networkR2.csv",row.names = F,quote = F)
 
-
-
-
-################## 8个hub基因关联的网络中，有多少基因是hub（区间内单倍型显著169个）################
-setwd("D:/AG_幼穗/第一轮审稿/总网络")
+################## How many genes are hub in a network of 8 hub gene associations (significant 169 haplotypes in the interval)################
 node <- read.csv("node_total_networkR1.csv")
 hub_sig <- node[which(node$hub == "yes" & node$putative == "yes" & node$haplotype == "significate"),]
 write.csv(hub_sig,"hub_putative_haplotype.csv",row.names=F)
 hub_net1 <- read.csv("s1_new_networkR2.csv")
 hub_net2 <- read.csv("s2_new_networkR2.csv")
 head(hub_net1)
-#####绘制韦恩图,
+#####Plotting Wayne diagrams
 library(VennDiagram)
 venn_list <- list(SM = unique(c(hub_net1$source,hub_net1$target)),
                   #Significate = tp, 
@@ -484,14 +480,12 @@ pdf("putative_hub_8hub_overlap.pdf",family="ArialMT")
 grid.draw(venn.plot)
 dev.off()
 
-
-#####合并的总网络与郭的overlap
-setwd("D:/AG_幼穗/第一轮审稿/总网络")
+#####Overlap of the merged total network with Guo
 net <- read.csv("total_network.csv")
-gll <- read.csv("../../综合的网络/与郭的网络进行比较/郭伟龙穗发育调控网络.csv")
+gll <- read.csv("guo_network.csv")
 head(net)
 head(gll)
-#郭伟龙网络中有多少在两个时期表达的基因
+#How many genes are expressed in two periods in the Guo's network
 tpm <- read.csv("D:/AG_幼穗/RNA-seq/result/S1vsS2_sleuth_tpm_norm_gene_level.csv")
 tpm <- tpm[,c(1,8,9)]
 colnames(tpm) <- c("source_id","SM_tpm","FM_tpm")
