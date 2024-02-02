@@ -1,0 +1,191 @@
+s1 <- read.csv("D:/AG_幼穗/遗传图谱/SNP/张学勇老师SNP.csv",header=TRUE)
+s1 <- s1[,c(2,3,3,4,1)]
+s2 <- read.csv("D:/AG_幼穗/遗传图谱/SNP/毛龙老师SNPR1.csv",header=TRUE)
+s2 <- s2[,c(2,3,3,5,1)]
+s3 <- read.csv("D:/AG_幼穗/遗传图谱/SNP/shubing_liu_SNP_use.csv")
+s3 <- s3[,c(11,12,12,6,1)]
+s3$chr <- paste0("chr",s3$chr)
+s4 <- read.csv("leading_snp_qtl_mergedv1.csv",header=TRUE)
+s4 <- s4[,c(11,14,14,7,8)]
+colnames(s4) <- colnames(s3)
+#s4$chr <- paste0("chr",s4$chr)
+head(s4)
+s3$P.value <- -log10(s3$P.value)
+s4$P.value <- -log10(s4$P.value)
+head(s1)
+head(s2)
+head(s3)
+head(s4)
+colnames(s2) <- colnames(s4)
+colnames(s1) <- colnames(s2)
+colnames(s3) <- colnames(s2)
+s1$type <- rep("Hao et al., 2020",nrow(s1))
+s2$type <- rep("Li et al., 2022",nrow(s2))
+s3$type <- rep("Pang et al., 2020",nrow(s3))
+s4$type <- rep("HC",nrow(s4))
+snp <- rbind(s1,s2,s3,s4)
+#snp <- rbind(s1,s2,s3)
+gwasResults <- snp[which(snp$P.value >= 5),]
+#gwasResults$Position.1 <- gwasResults$Position.1+1
+#gwasResults$Trait <- gsub("KN","GNS",gwasResults$Trait)
+#gwasResults$Trait <- gsub("SN","SNS",gwasResults$Trait)
+#gwasResults$Trait <- gsub("SPS","SNS",gwasResults$Trait)
+gwasResults$Trait <- gsub("sls","GNS",gwasResults$Trait)
+gwasResults$Trait <- gsub("sc","SL",gwasResults$Trait)
+gwasResults$Trait <- gsub("xss","SNS",gwasResults$Trait)
+#gwasResults$Trait <- gsub("kyxhs","FFN",gwasResults$Trait)
+head(gwasResults)
+gwasResults <- gwasResults[which(gwasResults$Trait == "SL" | gwasResults$Trait == "SNS" | gwasResults$Trait == "GNS"),]
+write.table(gwasResults,"gwasResults.bed",sep="\t",row.names=F)
+
+#####绘制metaQTL和SNP在染色体上的位置
+#install.packages('RIdeogram')
+setwd("D:/AG_幼穗/第一轮审稿/GWAS")
+require(RIdeogram)
+##染色体位置文件
+human_karyotype <- read.table("D:/AG_幼穗/遗传图谱/genome_table.txt")
+colnames(human_karyotype) <- c("Chr","Start","End","CE_start","CE_end")
+head(human_karyotype)
+##SNP密度文件
+gene_density <- read.table("gwasResults.bed",header=TRUE)
+gene_density <- gene_density[,c(1,2,3,4)]
+#gene_density$Value <- rep(1,nrow(gene_density))
+colnames(gene_density) <- c("Chr","Start","End","Value")
+gene_density$Chr <- gsub("chr","",gene_density$Chr)
+head(gene_density)
+##metaQTL文件
+Random_RNAs_500 <- read.csv("D:/AG_幼穗/遗传图谱/meta/meta_qtl.final.csv",header=TRUE,row.names=1)
+#只留下三个性状
+Random_RNAs_500 <- Random_RNAs_500[which(Random_RNAs_500$Trait == "SL" | Random_RNAs_500$Trait == "GNS" | Random_RNAs_500$Trait == "SNS"),]
+#Random_RNAs_500 <- Random_RNAs_500[which(Random_RNAs_500$Trait != "SL"),]
+Random_RNAs_500$shape <- Random_RNAs_500$Trait
+Random_RNAs_500$shape <- gsub("GNS","circle",Random_RNAs_500$shape)
+#Random_RNAs_500$shape <- gsub("FFNS","box",Random_RNAs_500$shape)
+Random_RNAs_500$shape <- gsub("SNS","triangle",Random_RNAs_500$shape)
+Random_RNAs_500$shape <- gsub("SL","circle",Random_RNAs_500$shape)
+Random_RNAs_500$color <- Random_RNAs_500$Trait
+Random_RNAs_500$color <- gsub("GNS","6a3d9a",Random_RNAs_500$color)
+#Random_RNAs_500$color <- gsub("FFNS","0a0a0a",Random_RNAs_500$color)
+Random_RNAs_500$color <- gsub("SNS","ff7f00",Random_RNAs_500$color)
+Random_RNAs_500$color <- gsub("SL","33a02c",Random_RNAs_500$color)
+Random_RNAs_500 <- Random_RNAs_500[,c(4,8,1,2,3,9)]
+colnames(Random_RNAs_500) <- c("Type","Shape","Chr","Start","End","color")
+Random_RNAs_500 <- Random_RNAs_500[order(Random_RNAs_500$Chr,Random_RNAs_500$Start),]
+head(Random_RNAs_500)
+ideogram(karyotype = human_karyotype, overlaid = gene_density, 
+         label = Random_RNAs_500, label_type = "marker",
+         colorset1 = c("#4575b4", "#d73027"))
+convertSVG("chromosome.svg", device = "pdf")
+
+
+#####根据SNP和qtl找到区段，并绘制区段内已知基因的分布情况
+setwd("D:/AG_幼穗/第一轮审稿/GWAS")
+metaqtl <- read.csv("D:/AG_幼穗/遗传图谱/meta/meta_qtl.final.csv")
+metaqtl <- metaqtl[which(metaqtl$Trait == "SL" | metaqtl$Trait == "GNS" | metaqtl$Trait == "SNS"),]
+#删除长度超过50M的metaQTL
+metaqtl$len <- abs(metaqtl$end-metaqtl$start)
+metaqtl <- metaqtl[which(metaqtl$len < 50000000),]
+metaqtl <- metaqtl[,c(2,3,4,5)]
+#只留下三个性状 SL GNS SNS
+metaqtl <- metaqtl[which(metaqtl$Trait != "FSN"),]
+metaqtl <- metaqtl[which(metaqtl$Trait != "kyxhs"),]
+write.table(metaqtl,"metaqtlFilter.bed",row.names=F,sep="\t")
+#合并2M以内的qtl
+cd /public/home/tllu/AG_gwas_new
+perl -p -i -e 's/^M//g' metaqtlFilter.bed
+perl -p -i -e 's/\"//g' metaqtlFilter.bed
+sort -k1,1 -k2n,2 metaqtlFilter.bed -o metaqtlFilter.bed
+bedtools merge -i metaqtlFilter.bed -c 4 -d 2000000 -o collapse >metaqtlFilter_merged_2M.bed
+#qtl左加2M有SNP的留下
+cd /public/home/tllu/AG_gwas_new
+awk '{if ($2-2000000 < 0) print $1"\t1\t"$3"\t"$4;else print $1"\t"$2-2000000"\t"$3"\t"$4}' metaqtlFilter_merged_2M.bed >test.bed
+perl -p -i -e 's/^M//g' gwasResults.bed
+perl -p -i -e 's/\"//g' gwasResults.bed
+perl -p -i -e 's/chr//g' gwasResults.bed
+sort -k1,1 -k2n,2 gwasResults.bed -o gwasResults.bed
+bedtools closest -D ref -t all -mdb all -a gwasResults.bed -b test.bed | awk -F['\t'] '{if($NF == 0) print $1"\t"$8"\t"$9"\t"$10}' >metaqtlFilter_merged_2M_left.bed
+#qtl右加2M有SNP的留下
+awk '{print $1"\t"$2"\t"$3+2000000"\t"$4}' metaqtlFilter_merged_2M.bed >test.bed
+bedtools closest -D ref -t all -mdb all -a gwasResults.bed -b test.bed | awk -F['\t'] '{if($NF == 0) print $1"\t"$8"\t"$9"\t"$10}' >metaqtlFilter_merged_2M_right.bed
+#增加一个条件，2M以内有大于2个qtl位点的留下
+grep "," metaqtlFilter_merged_2M.bed >metaqtlFilter_merged_2M_o2.bed
+#加上我们自己定位到的qtl,筛选条件，D:\AG_幼穗\第一轮审稿\GWAS\leading_snp_qtl_mergedv1.csv 中至少包含3个SNP，位置是v1.1的位置，放在了leading_snp_qtl.xls的第5个子表格中
+#sed 's/^/chr&/g' -i buchong_qtlR1.bed
+#补充的qtl对应的性状
+sort -k1,1 -k2n,2 buchong_qtlR1.bed -o buchong_qtlR1.bed
+bedtools merge -i buchong_qtlR1.bed -c 4 -o collapse > buchongR2.bed
+#合并
+cat metaqtlFilter_merged_2M_left.bed metaqtlFilter_merged_2M_right.bed metaqtlFilter_merged_2M_o2.bed buchongR2.bed | sort -k1,1 -k2n,2 | bedtools merge -i - -c 4 -o collapse >metaqtlFilter_merged_2MR1.bed
+#提取基因
+sed 's/^/chr&/g' -i metaqtlFilter_merged_2MR1.bed
+#awk '{print $1"\t"$2"\t"$3}' metaqtlFilter_merged_2MR1.bed | bedtools closest -D ref -t all -mdb all -a - -b /public/home/chaohe/db/geneR1.bed  | awk '{if($10 == 0)print $0}'  > metaqtlFilter_merged_2MR3.bed
+awk '{print $1"\t"$2"\t"$3}' metaqtlFilter_merged_2MR1.bed | bedtools closest -D ref -t all -mdb all -a - -b /public/home/chaohe/db/geneR1.bed  | awk '{if($10 == 0)print $0}'  > metaqtlFilter_merged_2MR4.bed
+awk '{print $0}' metaqtlFilter_merged_2MR1.bed | bedtools closest -D ref -t all -mdb all -a - -b /public/home/chaohe/db/geneR1.bed  | awk '{if($NF == 0)print $1"\t"$2"\t"$3"\t"$4}' | sort -k1,1 -k2n,2 | uniq  > metaqtlFilter_merged_2MR4_trait.bed
+
+###当前区间与已报道区间的重叠情况，venn图
+library(ChIPseeker)
+library(ChIPpeakAnno)
+setwd("D:/AG_幼穗/第一轮审稿/GWAS")
+#最终QTL
+a1 <- read.csv("正向区段及对应的表达基因.csv")
+#a1$V1 <- gsub("chr","",a1$V1)
+#a1$strand <- "+"
+#a1$name <- paste0("peak",1:nrow(a1))
+write.table(unique(a1[,c(3,4,5)]),"putative.bed",row.names=F,col.names = F,sep="\t",quote = F)
+a1 <- readPeakFile("putative.bed")
+#know
+a2 <- read.table("know.bed",sep="\t",header = F)
+a2$V1 <- paste0("chr",a2$V1)
+#a2$strand <- "+"
+#a2$name <- paste0("peak",1:nrow(a2))
+write.table(unique(a2[,c(1:3)]),"know.bedR1.bed",row.names=F,col.names = F,sep="\t",quote = F)
+a2 <- readPeakFile("know.bedR1.bed")
+#GWAS
+a3 <- read.table("buchongR2.bed",sep="\t",header=F)
+a3$V1 <- paste0("chr",a3$V1)
+write.table(unique(a3[,c(1,2,3)]),"buchong.bed",row.names=F,col.names = F,sep="\t",quote = F)
+a3 <- readPeakFile("buchong.bed")
+####overlap
+ol <- findOverlapsOfPeaks(a1,a2,a3)
+pdf('QTL-meta-find-venn.pdf')  ###结果需要根据deeptools的结果更改
+p1 <- makeVennDiagram(ol, NameOfPeaks=c("QTL-Identified","QTL-reported","GWAS QTL"), main = "QTLs", fill=c("#A6CEE3","#F781BF","#a781BF"),
+                      totalTest=536, by="feature",
+                      scaled=FALSE, euler.d=FALSE, 
+                      minoverlap = 1,ignore.strand=T, connectedPeaks="min")
+dev.off()
+ol <- findOverlapsOfPeaks(a1,a2)
+p1 <- makeVennDiagram(ol, NameOfPeaks=c("QTL-Identified","QTL-reported"), main = "QTLs", fill=c("#A6CEE3","#F781BF"),
+                      #totalTest=536, by="feature",
+                      #scaled=FALSE, euler.d=FALSE, 
+                      #minoverlap = 1,ignore.strand=T, 
+                      connectedPeaks="min")
+
+ol <- findOverlapsOfPeaks(a1,a3)
+p1 <- makeVennDiagram(ol, NameOfPeaks=c("QTL-Identified","GWAS QTL"), main = "QTLs", fill=c("#A6CEE3","#F781BF"),
+                      #totalTest=536, by="feature",
+                      #scaled=FALSE, euler.d=FALSE, 
+                      #minoverlap = 1,ignore.strand=T, 
+                      connectedPeaks="min")
+
+#dev.off()
+
+bedtools closest -D ref -t all -mdb all -a putative.bed -b buchong.bed  | awk '{if($NF == 0)print $0}' | wc -l 
+bedtools closest -D ref -t all -mdb all -a putative.bed -b know.bedR1.bed  | awk '{if($NF == 0)print $0}' | wc -l 
+bedtools closest -D ref -t all -mdb all -a buchong.bed -b know.bedR1.bed  | awk '{if($NF == 0)print $0}' | wc -l 
+
+
+#统计总共多少个区段
+awk '{print $1"\t"$2"\t"$3}' metaqtlFilter_merged_2MR4.bed | bedtools merge -i -  | wc -l  #177个区间
+########去除不表达的基因
+setwd("D:/AG_幼穗/第一轮审稿/GWAS")
+qtl <- read.table("metaqtlFilter_merged_2MR4.bed")
+tpm <- read.csv("D:/AG_幼穗/RNA-seq/result/S1vsS2_sleuth_tpm_norm_gene_level.csv")
+tpm$V7 <- tpm[,1]
+head(qtl)
+head(tpm)
+qtl_tpm <- merge(qtl,tpm,by="V7",all=F)
+qtl_tpm$max <- rowMaxs(as.matrix(qtl_tpm[,12:17]))
+head(qtl_tpm)
+qtl_tpm_final <- qtl_tpm[which(qtl_tpm$max > 0.5),]
+head(qtl_tpm_final)
+write.csv(qtl_tpm_final,"正向区段及对应的表达基因.csv")
