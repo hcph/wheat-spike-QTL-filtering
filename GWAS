@@ -1,0 +1,319 @@
+###调取现有材料的基因型
+mkdir /public/home/tllu/AG_gwas_new
+cd /public/home/tllu/AG_gwas_new
+#调取现有材料的基因型
+module load plink/1.9
+module load tabix/0.2.6-foss-2016b
+#去除四倍体
+cp /public/home/tllu/enhancer_snp/20222023/keep.txt keep.txt  #得到文件后手动去除
+###基因型文件处理，合并indel和SNP，更改indel
+module load GATK/4.3.0.0
+cd /public/home/tllu/AG_gwas_new
+cp /public/home/xhu/allsample_indel_2.1.vcf  .
+perl modifi_chromosomein_vcf.pl  allsample_indel_2.1.vcf  allsample_indel.vcf
+#修改indel的ID
+awk -F['\t'] -v OFS="\t" '{if ($3~/IND-[0-9]*/) {$4="A";$5="T"; print $0} else print $0}' allsample_indel.vcf >allsample_indel_2.1_modified.vcf
+#合并snp和indel
+plink --vcf /public/home/xhu/allsample_snp_2.1.vcf  --double-id --make-bed --out file1
+plink --vcf allsample_indel_2.1_modified.vcf --double-id --make-bed --out file2
+plink --bfile file1 --bmerge file2.bed file2.bim file2.fam --recode vcf --out merge
+###调取指定材料
+plink --bfile merge --keep keep.txt --make-bed --out HC_genotypeR1
+plink --bfile HC_genotypeR1 --geno 0.3 --maf 0.05 --make-bed --out HC_genotype_finishedR1
+
+####第二步，处理群体分层
+# Create a racefile of your own data
+plink --bfile HC_genotype_finished --pca --out 1000_all
+module load R/4.0.0
+library(ggplot2)
+data <- read.table("1000_all.eigenvec",header=T)
+pdf("all_pca.pdf")
+ggplot(data,aes(x=data[,3],y=data[,4])) + geom_point()
+dev.off()
+
+##群体结构分析
+conda install -c bioconda admixture
+bsub  -J k2-3 -n 20 -o k2-3.out -e k2-3.err -q smp -R "rusage[mem=200GB]"  "admixture --cv HC_genotype_finishedR1.bed 6  -j20 | tee log6.out"
+
+####绘图
+grep -h CV log6.out |sort -nk4  -t ' ' > cross-validation_error.txt
+#CV error (K=6): 0.43366
+#...
+# step 5 画图
+grep -h CV log6.out |sort -nk4  -t ' ' |tail -n +2 |perl -p -e 's/.*K=(.+?)\):.*/$1/g' |xargs -i rm HC_genotype_finishedR1.{}.Q HC_genotype_finishedR1.{}.P log{}.out
+$num=`grep -h CV log*.out |sort -nk4  -t ' ' |head -n 1 |perl -p -e 's/.*K=(.+?)\):.*/$1/g' `
+num=6
+paste <(cut -f 1 -d ' ' HC_genotype_finishedR1.fam  ) <(cat HC_genotype_finishedR1.${num}.Q|tr ' ' '\t')  > HC_genotype_finishedR1.${num}.Q.tab
+#R
+library(ggplot2)
+library(reshape2)
+infile <- "HC_genotype_finishedR1.6.Q.tab" # 按照上面代码鉴定的最佳K值修改输入文件
+tbl <- read.table(infile)
+colnames(tbl) <-c("strain" ,paste("Population", seq(ncol(tbl)-1 ), sep = ''))
+########################################
+order_dat <- data.frame(sort(colSums(tbl[,2:ncol(tbl)]),decreasing = T))
+Population_order = sort(colSums(tbl[,2:ncol(tbl)]), index.return = T, decreasing = T )
+tbl <- tbl[,c(1,Population_order$ix + 1 )]
+# #add population num
+# # 每一行的最大值对应的列名 作为 population id 增加到strain前
+tbl$strain <-  paste(apply(tbl[,2:ncol(tbl)], 1, function(t) colnames(tbl[,2:ncol(tbl)])[which.max(t)]),tbl$strain,sep = "_")
+# # 第二次排序 根据群体编号再次将菌株顺序排列，此时表格的顺序是先安群体排在一起，又按照比例排序
+tbl$pop <- apply(tbl[,2:ncol(tbl)], 1, function(t) colnames(tbl[,2:ncol(tbl)])[which.max(t)])
+tbl <- tbl[with(tbl, order(tbl$pop)),]
+data_long <- melt(data = tbl,
+                  id.vars=c("strain","pop"),
+                  variable.name="Population",
+                  value.name="Ancestry")
+library(ggsci)
+colpalettes<-unique(c(pal_npg("nrc")(10),pal_aaas("default")(10),pal_nejm("default")(8),pal_lancet("lanonc")(9),
+                      pal_jama("default")(7),pal_jco("default")(10),pal_ucscgb("default")(26),pal_d3("category10")(10),
+                      pal_locuszoom("default")(7),pal_igv("default")(51),
+                      pal_uchicago("default")(9),pal_startrek("uniform")(7),
+                      pal_tron("legacy")(7),pal_futurama("planetexpress")(12),pal_rickandmorty("schwifty")(12),
+                      pal_simpsons("springfield")(16),pal_gsea("default")(12)))
+set.seed(1234567)
+col_list <- sample(colpalettes,ncol(tbl),replace = F)
+p <- ggplot(data = data_long, mapping = aes(x = strain  , y = Ancestry, fill = Population)) +
+  geom_bar(stat = 'identity', position = 'fill',width = 1 )+ #,color = "black"
+  scale_fill_manual(values = col_list)+
+  scale_y_continuous(expand = c(0, 0) ) +  
+  theme(axis.text.x = element_text(size = 10, vjust = 0.5, hjust = 1, angle = 90)) #family = "myFont", color = "green", face = "bold", 
+pdf(file =paste(infile,".pdf",sep = ""),width=0.2*nrow(tbl), height=8.27)
+print(p)
+dev.off()
+
+####绘制进化树
+plink  --bfile HC_genotype_finishedR1 --allow-extra-chr --chr-set 21  --genome
+#perl
+######（第一个open里改成自己的genome文件
+######第二个open里改成自己的fam文件
+######第三个open里将>后面的改成输出的文件名.meg
+######在下面的sample_size里，将数量改成自己使用的数量）
+#!usr/bin/perl
+# define array of input and output files
+open (AAA,"plink.genome") || die "can't open AAA"; ##用自己上一步的genome文件
+open (BBB,"HC_genotype_finishedR1.fam") || die "can't open BBB"; ##使用自己的fam文件
+open (CCC,">270_Dis.meg"); ##输出文件名在>后面改
+my @aa=<AAA>;
+my @bb=<BBB>;
+
+$sample_size=290; ###  个体数目，改成自己用的数目
+print CCC "#mega\n!Title: $sample_size pigs;\n!Format DataType=Distance DataFormat=UpperRight NTaxa=$sample_size;\n\n"; 
+
+foreach ($num1=0;$num1<=$#bb;$num1++){
+	chomp $bb[$num1];
+	@arraynum1=split(/\s+/,$bb[$num1]);
+	print CCC "#$arraynum1[1]\n";       ##个体的ID名称
+	}
+print CCC "\n";
+
+@array=();
+foreach ($num2=1;$num2<=$#aa;$num2++){
+	chomp $aa[$num2];
+	@arraynum1=split(/\s+/,$aa[$num2]);
+	push(@array,1-$arraynum1[12]);
+	}
+	
+@array2=(0);
+$i=$sample_size;
+while ($i>0){	
+	push(@array2,$array2[$#array2]+$i);
+	$i=$i-1;
+	}
+print "@array2";
+
+for ($i=($sample_size-1); $i>=0; $i=$i-1){
+	print CCC " " x ($sample_size-($i+1));
+	    for ($j=$array2[$sample_size-$i-1]; $j<=$array2[$sample_size-$i]-1; $j++){
+		                                                                          print CCC "$array[$j] ";	
+			                                                                     }
+	    print  CCC "\n";
+	}
+close AAA;
+close BBB;
+close CCC;
+#mega可视化  neighbor-join
+
+#选择PCA
+###twstats方法，计算p-value，结果为前17个
+# 利用 Plink 计算 PCA，输出前 50 个主成分
+plink --bfile HC_genotype_finishedR1 --pca 50 --out total_pcaR1
+module load EIGENSOFT/6.1.4
+twstats -t twtable -i total_pcaR1.eigenval -o hc_pca_numberR1
+###########基于可解释方差,选择累计可解释方差在80-90%，结果为8
+module load R/4.0.0
+library(gdsfmt)
+library(SNPRelate)
+# 输入 PLINK 文件路径
+bed.fn <- "HC_genotype_finished.bed"
+fam.fn <- "HC_genotype_finished.fam"
+bim.fn <- "HC_genotype_finished.bim"
+# 将 PLINK 文件转为 GDS 文件
+snpgdsBED2GDS(bed.fn, fam.fn, bim.fn, "test.gds")
+# 读取 GDS 文件
+genofile <- snpgdsOpen("test.gds")
+# 根据 LD 过滤 SNPs，阈值根据需要设定
+set.seed(1000)
+snpset <- snpgdsLDpruning(genofile, ld.threshold=0.2)
+# 选择 SNP pruning 后要保留的 SNP
+snpset.id <- unlist(unname(snpset))
+# 计算 PCA，num.thread 是并行的线程数
+pca <- snpgdsPCA(genofile, snp.id=snpset.id, num.thread=10)
+# 以百分比形式输出 variance proportion
+print(pca$varprop*100)
+library(ggplot2)
+K= 30
+pdf("total_scallaterplot.pdf")
+qplot(x = 1:K, y = (pca$varprop[1:K]), col = "red", xlab = "PC", ylab = "Proportion of explained variance") + 
+  geom_line() + guides(colour = FALSE) +
+  ggtitle(paste("Scree Plot - K =", K))
+dev.off()
+#生成协变量文件	 
+awk '{print $1,$2,$3,$4,$5,$6,$7,$8}' total_pca.eigenvec >pca_cov_pc6.txt
+#混合线性模型
+cd /public/home/tllu/AG_gwas_new
+cp /public/home/tllu/enhancer_snp/20222023/xss.txt xss.txt
+cp /public/home/tllu/enhancer_snp/20222023/SC.txt SC.txt
+cp /public/home/tllu/enhancer_snp/20222023/SLS.txt SLS.txt
+cp /public/home/tllu/enhancer_snp/20222023/KYXSS.txt KYXSS.txt
+module load Fastlmm/v0.2.32
+awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6,$7,$8}' total_pca.eigenvec >pca_cov_pc6.txt
+bsub  -J sc_pc6 -n 1 -o sc.out -e sc.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno SC.txt -covar pca_cov_pc6.txt -mpheno 1 -out sc_pc6_fastlmm"
+bsub  -J SLS_pc6 -n 1 -o SLS.out -e SLS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno SLS.txt -covar pca_cov_pc6.txt -mpheno 1 -out sls_pc6_fastlmm"
+bsub  -J xss_pc6 -n 1 -o xss.out -e xss.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno xss.txt -covar pca_cov_pc6.txt -mpheno 1 -out xssR_pc6_fastlmm"
+bsub  -J KYXSS_pc6 -n 1 -o KYXSS.out -e KYXSS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno KYXSS.txt -covar pca_cov_pc6.txt -mpheno 1 -out kyxss_pc6_fastlmm"
+awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6,$7}' total_pca.eigenvec >pca_cov_pc5.txt
+bsub  -J sc_pc5 -n 1 -o sc.out -e sc.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno SC.txt -covar pca_cov_pc5.txt -mpheno 1 -out sc_pc5_fastlmm"
+bsub  -J SLS_pc5 -n 1 -o SLS.out -e SLS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno SLS.txt -covar pca_cov_pc5.txt -mpheno 1 -out sls_pc5_fastlmm"
+bsub  -J xss_pc5 -n 1 -o xss.out -e xss.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno xss.txt -covar pca_cov_pc5.txt -mpheno 1 -out xssR_pc5_fastlmm"
+bsub  -J KYXSS_pc5 -n 1 -o KYXSS.out -e KYXSS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno KYXSS.txt -covar pca_cov_pc5.txt -mpheno 1 -out kyxss_pc5_fastlmm"
+awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6}' total_pca.eigenvec >pca_cov_pc4.txt
+bsub  -J sc_pc4 -n 1 -o sc.out -e sc.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno SC.txt -covar pca_cov_pc4.txt -mpheno 1 -out sc_pc4_fastlmm"
+bsub  -J SLS_pc4 -n 1 -o SLS.out -e SLS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno SLS.txt -covar pca_cov_pc4.txt -mpheno 1 -out sls_pc4_fastlmm"
+bsub  -J xss_pc4 -n 1 -o xss.out -e xss.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno xss.txt -covar pca_cov_pc4.txt -mpheno 1 -out xssR_pc4_fastlmm"
+bsub  -J KYXSS_pc4 -n 1 -o KYXSS.out -e KYXSS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finished -bfilesim HC_genotype_finished  -pheno KYXSS.txt -covar pca_cov_pc4.txt -mpheno 1 -out kyxss_pc4_fastlmm"
+##用自己生成的基因型文件来做
+awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6,$7,$8}' total_pcaR1.eigenvec >pca_cov_pc6R1.txt
+bsub  -J sc_pc6 -n 1 -o sc.out -e sc.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finishedR1 -bfilesim HC_genotype_finishedR1  -pheno SC.txt -covar pca_cov_pc6R1.txt -mpheno 1 -out sc_pc6_fastlmmR1"
+bsub  -J SLS_pc6 -n 1 -o SLS.out -e SLS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finishedR1 -bfilesim HC_genotype_finishedR1  -pheno SLS.txt -covar pca_cov_pc6R1.txt -mpheno 1 -out sls_pc6_fastlmmR1"
+bsub  -J xss_pc6 -n 1 -o xss.out -e xss.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finishedR1 -bfilesim HC_genotype_finishedR1  -pheno xss.txt -covar pca_cov_pc6R1.txt -mpheno 1 -out xssR_pc6_fastlmmR1"
+bsub  -J KYXSS_pc6 -n 1 -o KYXSS.out -e KYXSS.err -q smp -R "rusage[mem=100GB]"  "fastlmmc -bfile HC_genotype_finishedR1 -bfilesim HC_genotype_finishedR1  -pheno KYXSS.txt -covar pca_cov_pc6R1.txt -mpheno 1 -out kyxss_pc6_fastlmmR1"
+
+cd /public/home/tllu/AG_gwas_new
+for i in xssR_pc6 sc_pc6 sls_pc6;
+do
+awk '{if ($5 < 1e-5) print $0}' "$i"_fastlmmR1 >"$i"_sig.fastlmmR1
+done
+
+for i in xssR_pc6 sc_pc6 sls_pc6;
+do
+awk '{print $1"\t"$2"\t"$4"\t"$5}' "$i"_fastlmmR1 >"$i"_pR1.txt
+done
+#R
+library(CMplot)
+#name = c("kyxss_pc5", "kyxss_pc6", "sc_pc5","sc_pc6", "sls_pc5","sls_pc6","xssR_pc5","xssR_pc6")
+"xssR_pc6","sc_pc6", 
+name = c("sls_pc6")
+for (i in name) {
+  dat <- read.table(paste0(i,"_pR1.txt"),sep="\t",header=T)
+  colnames(dat) <-c("SNP", "CHR", "BP", "P")
+  CMplot(dat,plot.type="q",threshold=0.05,file="jpg",file.name=paste0(i,"_qqR1"))
+  #CMplot(dat,plot.type="q",threshold=0.05,file="pdf",file.name=paste0(i,"_qqR1"))
+  CMplot(dat,plot.type="m",threshold=c(1e-5),threshold.col='black', threshold.lty=c(1,2),threshold.lwd=c(1,1),file="jpg",file.name=paste0(i,"_ManhtnR1"), amplify=T, signal.cex=c(1,1),signal.pch=c(20,20),signal.col=c("red","orange"))
+  #CMplot(dat,plot.type="m",threshold=c(1e-5),threshold.col='black', threshold.lty=c(1,2),threshold.lwd=c(1,1),file="pdf",file.name=paste0(i,"_ManhtnR1"), amplify=T, signal.cex=c(1,1),signal.pch=c(20,20),signal.col=c("red","orange"))
+}
+
+####leading SNP序列调取leading_snp
+#最终方法##########用plink确定LD block
+#cd /public/home/tllu/enhancer_snp/20222023
+cd /public/home/tllu/AG_gwas_new
+awk '{print $5}' gwas_sig.txt | uniq >snp.txt
+plink --bfile ../HC_genotypeR1 --show-tags snp.txt  --list-all --tag-r2 0.5 --out sig_snp_tag.txt
+#合并生成qtl
+awk -v OFS="\t" '{print $2,$5,$6,$1}'  sig_snp_tag.txt.tags.list >sig_snp_tag.bed
+sort -k1,1 -k2n,2 sig_snp_tag.bed  | bedtools merge -i - -c 4 -o collapse >sig_snp_tag_merged.bed
+#R,snp的分析.R
+
+######候选基因单倍型分析
+#提取候选基因上有3.5kb和基因内部上的snp
+cd /public/home/tllu/AG_gwas_new/haptype
+awk '{if($6 == "+") print $1"\t"$2-3500"\t"$3"\t"$4; else if($6 == "-") print $1"\t"$2"\t"$3+3500"\t"$4}' genev2.1.bed >target.txt
+perl -p -i -e 's/chr1A/1/g' target.txt
+perl -p -i -e 's/chr1B/2/g' target.txt
+perl -p -i -e 's/chr1D/3/g' target.txt
+perl -p -i -e 's/chr2A/4/g' target.txt
+perl -p -i -e 's/chr2B/5/g' target.txt
+perl -p -i -e 's/chr2D/6/g' target.txt
+perl -p -i -e 's/chr3A/7/g' target.txt
+perl -p -i -e 's/chr3B/8/g' target.txt
+perl -p -i -e 's/chr3D/9/g' target.txt
+perl -p -i -e 's/chr4A/10/g' target.txt
+perl -p -i -e 's/chr4B/11/g' target.txt
+perl -p -i -e 's/chr4D/12/g' target.txt
+perl -p -i -e 's/chr5A/13/g' target.txt
+perl -p -i -e 's/chr5B/14/g' target.txt
+perl -p -i -e 's/chr5D/15/g' target.txt
+perl -p -i -e 's/chr6A/16/g' target.txt
+perl -p -i -e 's/chr6B/17/g' target.txt
+perl -p -i -e 's/chr6D/18/g' target.txt
+perl -p -i -e 's/chr7A/19/g' target.txt
+perl -p -i -e 's/chr7B/20/g' target.txt
+perl -p -i -e 's/chr7D/21/g' target.txt
+plink --bfile ../HC_genotype_finishedR1 --extract target.txt range --make-bed --out target_snp
+#plink --bfile target_snp --recode vcf-iid --out target_snp_vcf
+##做ttest
+#计算p-value
+#提前准备好基因型文件，gene.txt 表型文件 和  NL18r2.txt，要用IWGSCv2.1版的基因文件
+cd /public/home/tllu/AG_gwas_new/haptype
+awk '{print $1"\tIWGSC_v2.1\tgene\t"$2"\t"$3"\t.\t"$6"\t.\t"$4}' genev2.1.bed >geneR1.txt
+perl -p -i -e 's/chr1A/1/g' geneR1.txt
+perl -p -i -e 's/chr1B/2/g' geneR1.txt
+perl -p -i -e 's/chr1D/3/g' geneR1.txt
+perl -p -i -e 's/chr2A/4/g' geneR1.txt
+perl -p -i -e 's/chr2B/5/g' geneR1.txt
+perl -p -i -e 's/chr2D/6/g' geneR1.txt
+perl -p -i -e 's/chr3A/7/g' geneR1.txt
+perl -p -i -e 's/chr3B/8/g' geneR1.txt
+perl -p -i -e 's/chr3D/9/g' geneR1.txt
+perl -p -i -e 's/chr4A/10/g' geneR1.txt
+perl -p -i -e 's/chr4B/11/g' geneR1.txt
+perl -p -i -e 's/chr4D/12/g' geneR1.txt
+perl -p -i -e 's/chr5A/13/g' geneR1.txt
+perl -p -i -e 's/chr5B/14/g' geneR1.txt
+perl -p -i -e 's/chr5D/15/g' geneR1.txt
+perl -p -i -e 's/chr6A/16/g' geneR1.txt
+perl -p -i -e 's/chr6B/17/g' geneR1.txt
+perl -p -i -e 's/chr6D/18/g' geneR1.txt
+perl -p -i -e 's/chr7A/19/g' geneR1.txt
+perl -p -i -e 's/chr7B/20/g' geneR1.txt
+perl -p -i -e 's/chr7D/21/g' geneR1.txt
+#准备NL18r2.txt
+cd /public/home/tllu/AG_gwas_new/haptype
+mkdir SL
+mkdir GNS
+mkdir SNS
+mkdir FFN
+###注意NL18r0.py要更改基因型文件
+awk '{print "SL\t.\t.\t.\t.\t.\t"$9"\t."}' geneR1.txt >SL/NL18r0.txt
+awk '{print "GNS\t.\t.\t.\t.\t.\t"$9"\t."}' geneR1.txt >GNS/NL18r0.txt
+awk '{print "SNS\t.\t.\t.\t.\t.\t"$9"\t."}' geneR1.txt >SNS/NL18r0.txt
+awk '{print "FFN\t.\t.\t.\t.\t.\t"$9"\t."}' geneR1.txt >FFN/NL18r0.txt
+#准备表型数据
+cp ../SC.txt SL/SL.txt
+cp ../SLS.txt GNS/GNS.txt
+cp ../xss.txt  SNS/SNS.txt 
+cp ../KYXSS.txt FFN/FFN.txt
+#运行程序
+module load Python/3.8.6
+module load plink/1.9
+cd /public/home/tllu/AG_gwas_new/haptype/SL
+bsub  -J sl -n 1 -o sl.out -e sl.err -q high -R "rusage[mem=80GB]" "python NL18r0.py"
+cd /public/home/tllu/AG_gwas_new/haptype/GNS
+bsub  -J GNS -n 1 -o GNS.out -e GNS.err -q high -R "rusage[mem=80GB]" "python NL18r0.py"
+cd /public/home/tllu/AG_gwas_new/haptype/SNS
+bsub  -J SNS -n 1 -o SNS.out -e SNS.err -q high -R "rusage[mem=80GB]" "python NL18r0.py"
+cd /public/home/tllu/AG_gwas_new/haptype/FFN
+bsub  -J FFN -n 1 -o FFN.out -e FFN.err  -q high -R "rusage[mem=80GB]" "python NL18r0.py"
+#####合并单倍型显著的基因
+cd /public/home/tllu/AG_gwas_new/haptype
+cat SNS/NL18_result.txt GNS/NL18_result.txt SL/NL18_result.txt >total_gene.txt
