@@ -77,7 +77,6 @@ ideogram(karyotype = human_karyotype, overlaid = gene_density,
          colorset1 = c("#4575b4", "#d73027"))
 convertSVG("chromosome.svg", device = "pdf")
 
-
 #####根据SNP和qtl找到区段，并绘制区段内已知基因的分布情况
 setwd("D:/AG_幼穗/第一轮审稿/GWAS")
 metaqtl <- read.csv("D:/AG_幼穗/遗传图谱/meta/meta_qtl.final.csv")
@@ -122,57 +121,10 @@ sed 's/^/chr&/g' -i metaqtlFilter_merged_2MR1.bed
 awk '{print $1"\t"$2"\t"$3}' metaqtlFilter_merged_2MR1.bed | bedtools closest -D ref -t all -mdb all -a - -b /public/home/chaohe/db/geneR1.bed  | awk '{if($10 == 0)print $0}'  > metaqtlFilter_merged_2MR4.bed
 awk '{print $0}' metaqtlFilter_merged_2MR1.bed | bedtools closest -D ref -t all -mdb all -a - -b /public/home/chaohe/db/geneR1.bed  | awk '{if($NF == 0)print $1"\t"$2"\t"$3"\t"$4}' | sort -k1,1 -k2n,2 | uniq  > metaqtlFilter_merged_2MR4_trait.bed
 
-###当前区间与已报道区间的重叠情况，venn图
-library(ChIPseeker)
-library(ChIPpeakAnno)
-setwd("D:/AG_幼穗/第一轮审稿/GWAS")
-#最终QTL
-a1 <- read.csv("正向区段及对应的表达基因.csv")
-#a1$V1 <- gsub("chr","",a1$V1)
-#a1$strand <- "+"
-#a1$name <- paste0("peak",1:nrow(a1))
-write.table(unique(a1[,c(3,4,5)]),"putative.bed",row.names=F,col.names = F,sep="\t",quote = F)
-a1 <- readPeakFile("putative.bed")
-#know
-a2 <- read.table("know.bed",sep="\t",header = F)
-a2$V1 <- paste0("chr",a2$V1)
-#a2$strand <- "+"
-#a2$name <- paste0("peak",1:nrow(a2))
-write.table(unique(a2[,c(1:3)]),"know.bedR1.bed",row.names=F,col.names = F,sep="\t",quote = F)
-a2 <- readPeakFile("know.bedR1.bed")
-#GWAS
-a3 <- read.table("buchongR2.bed",sep="\t",header=F)
-a3$V1 <- paste0("chr",a3$V1)
-write.table(unique(a3[,c(1,2,3)]),"buchong.bed",row.names=F,col.names = F,sep="\t",quote = F)
-a3 <- readPeakFile("buchong.bed")
-####overlap
-ol <- findOverlapsOfPeaks(a1,a2,a3)
-pdf('QTL-meta-find-venn.pdf')  ###结果需要根据deeptools的结果更改
-p1 <- makeVennDiagram(ol, NameOfPeaks=c("QTL-Identified","QTL-reported","GWAS QTL"), main = "QTLs", fill=c("#A6CEE3","#F781BF","#a781BF"),
-                      totalTest=536, by="feature",
-                      scaled=FALSE, euler.d=FALSE, 
-                      minoverlap = 1,ignore.strand=T, connectedPeaks="min")
-dev.off()
-ol <- findOverlapsOfPeaks(a1,a2)
-p1 <- makeVennDiagram(ol, NameOfPeaks=c("QTL-Identified","QTL-reported"), main = "QTLs", fill=c("#A6CEE3","#F781BF"),
-                      #totalTest=536, by="feature",
-                      #scaled=FALSE, euler.d=FALSE, 
-                      #minoverlap = 1,ignore.strand=T, 
-                      connectedPeaks="min")
-
-ol <- findOverlapsOfPeaks(a1,a3)
-p1 <- makeVennDiagram(ol, NameOfPeaks=c("QTL-Identified","GWAS QTL"), main = "QTLs", fill=c("#A6CEE3","#F781BF"),
-                      #totalTest=536, by="feature",
-                      #scaled=FALSE, euler.d=FALSE, 
-                      #minoverlap = 1,ignore.strand=T, 
-                      connectedPeaks="min")
-
-#dev.off()
-
+###当前区间与已报道区间的重叠情况，venn图，根据overlap结果绘制venn图
 bedtools closest -D ref -t all -mdb all -a putative.bed -b buchong.bed  | awk '{if($NF == 0)print $0}' | wc -l 
 bedtools closest -D ref -t all -mdb all -a putative.bed -b know.bedR1.bed  | awk '{if($NF == 0)print $0}' | wc -l 
 bedtools closest -D ref -t all -mdb all -a buchong.bed -b know.bedR1.bed  | awk '{if($NF == 0)print $0}' | wc -l 
-
 
 #统计总共多少个区段
 awk '{print $1"\t"$2"\t"$3}' metaqtlFilter_merged_2MR4.bed | bedtools merge -i -  | wc -l  #177个区间
